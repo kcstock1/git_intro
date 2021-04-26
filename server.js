@@ -12,7 +12,6 @@ const SLIP = "Slip";
 const BOAT = "Boat";
 const LOAD = "Load";
 
-
 const router = express.Router();
 
 app.use(bodyParser.json());
@@ -57,18 +56,19 @@ function get_boat(id,req){
         entities[0][0].loads.forEach(element => {
             element.self = fullUrl + '/loads/' + element.id;
         });
+        entities[0][0].id = id;
 		return entities[0] //.map(fromDatastore);
     });
     return results;
   //  return results;
 }
 
-function get_load(id){
+function get_load(id,req){
     const key = datastore.key([LOAD, parseInt(id,10)]);
     const q = datastore.createQuery(LOAD).filter('__key__', '=', key); 
     console.log(datastore.runQuery(q));
     results = datastore.runQuery(q).then( (entities) => {
-		return entities[0].map(fromDatastore);
+		return entities[0]; //.map(fromDatastore);
     });
     return results;
   //  return results;
@@ -103,7 +103,7 @@ function get_boats(req){
 		});
 }
 
-function get_loads(req){
+async function get_loads(req){
     var q = datastore.createQuery(LOAD).limit(3);
     const results = {};
     if(Object.keys(req.query).includes("cursor")){
@@ -119,76 +119,135 @@ function get_loads(req){
 		});
 }
 
-function get_slips(){
-	const q = datastore.createQuery(SLIP);
-	return datastore.runQuery(q).then( (entities) => {
-			return entities[0].map(fromDatastore);
-		});
-}
+async function get_loads_for_boat(boat_id,req){
+    console.log(boat_id);
+    const boat = await get_boat(parseInt(boat_id,10),req);
 
-function put_lodging(id, name, description, price){
-    const key = datastore.key([LODGING, parseInt(id,10)]);
-    const lodging = {"name": name, "description": description, "price": price};
-    var x = datastore.save({"key":key, "data":lodging});
-    console.log(x);
-    return x;
+    arr = []
+    for (var i = 0; i < boat[0].loads.length ;i++)
+    {          
+        var load = await get_load(boat[0].loads[i].id,req);
+        boat[0].loads[i].volume = load[0].volume;
+        boat[0].loads[i].content =  load[0].content;
+        //console.log(boat[0].loads[i])
+        //console.log("here we are");
+    }
+
+    return boat[0].loads;
 }
 
 async function patch_boat(id, name, type, length){
     const key = datastore.key([BOAT, parseInt(id,10)]);
     var boat = {"name": name, "type": type, "length": length};
-      
     
-    //.catch( (boat) => {
-     //   var Error = {"Error":"No boat with this boat_id exists"}; 
-       // res.status(404).send(JSON.stringify(Error));
-    //});
-
     console.log(boat);
     var x = await datastore.save({"key":key, "data":boat}); 
     console.log(boat);
     return boat;  
 
-       //.catch( (boat) => {
-       // var Error = {"Error":"No boat with this boat_id exists"}; 
-       // res.status(404).send(JSON.stringify(Error));
-
-
-   // return datastore.save({"key":key, "data":boat});
 }
-function boat_arrive(slip_id, boat_id){
-    const key = datastore.key([BOAT, parseInt(slip_id,10)]);
-    console.log(key)
-    return  get_slip(slip_id).then( (slip2) => {
-        const slip1 = {"number":slip2[0].number, "current_boat":boat_id};
-        datastore.save({"key":key, "data":slip1}).then(() => {return key});
-    }         
-    )};
 
-async function add_load(boat_id,load_id,req){
-    var fullUrl = req.protocol + '://' + req.get('host') + '/loads/';
-    const key = datastore.key([BOAT, parseInt(boat_id,10)]);
+async function assign_load(boat_id,load_id,req){
+    var fullUrl = req.protocol + '://' + req.get('host');
+   
+    //Update the boat
+    const key =  datastore.key([BOAT, parseInt(boat_id,10)]);
     var boat = await get_boat(boat_id,req);
     var temp_loads = boat[0].loads;
     var new_load = {"id": + load_id};  
     temp_loads.push(new_load);
     boat[0].loads = temp_loads; 
-    await datastore.save({"key":key, "data":boat[0]}).then(() => {
-        boat[0].loads.forEach(element => {
-            element.self = fullUrl + element.id;
-        });
 
-    return boat[0]});       
+     datastore.save({"key":key, "data":boat[0]});
+    boat[0].loads.forEach(element => {
+            element.self = fullUrl + '/loads/' + element.id;});
+    
+    //update the load
+    var lkey = datastore.key([LOAD, parseInt(load_id,10)]);     
+    var load = await get_load(load_id,req);
+    var new_boat = {"id":key.id,"name":boat[0].name,"self": fullUrl + '/boats/' + key.id};
+    load[0].carrier = new_boat;
+    console.log(load[0]);
+    datastore.save({"key":lkey, "data":load[0]});
+
+    return boat[0];       
  };
 
 
-function delete_boat(id){
+ async function remove_load(boat_id,load_id,req){
+    var fullUrl = req.protocol + '://' + req.get('host');
+   
+    //Update the boat
+    const key =  datastore.key([BOAT, parseInt(boat_id,10)]);
+    var boat = await get_boat(boat_id,req);
+    var temp_loads = boat[0].loads;
+
+    console.log(temp_loads);
+    var index =  temp_loads.indexOf(String(load_id));
+    console.log(index);
+    let i = 0;
+    let location = -5;
+    temp_loads.forEach(element => {
+        if(element.id == load_id)
+        {
+            location = i;
+        }
+        i++;
+
+    });
+
+    if(location != -5)
+    {
+        temp_loads.splice(location,1);
+        boat[0].loads = temp_loads;
+        datastore.save({"key":key, "data":boat[0]});
+
+    }
+
+    //update the load
+    var updated_load = await get_load(load_id,req);
+    var lkey = datastore.key([LOAD, parseInt(load_id,10)]);  
+    console.log(updated_load);
+    updated_load[0].carrier = [];
+    datastore.save({"key":lkey, "data":updated_load[0]});
+    console.log(updated_load[0]);
+ };
+
+
+async function delete_boat(id,req){
     const key = datastore.key([BOAT, parseInt(id,10)])
+    var boat = await get_boat(id,req);
+    boat[0].loads.forEach( async function (element) {
+        console.log(element.id);
+        var updated_load = await get_load(element.id);
+        const lkey = datastore.key([LOAD, parseInt(element.id,10)])
+        updated_load[0].carrier = [];
+        console.log(updated_load);
+        datastore.save({"key":lkey, "data":updated_load[0]});
+    })
+
     return datastore.delete(key)         
 }; 
 
-function delete_load(id){
-    const key = datastore.key([LOAD, parseInt(id,10)]);
+async function delete_load(id,req){
+    
+    const key = datastore.key([LOAD, parseInt(id,10)]);   
+    var load = await get_load(id,req);
+    //Remove any loads from thier boats
+    console.log(load[0]);
+//    try{ 
+        if(typeof(load[0].carrier) !=  "undefined")
+        {
+            console.log(load[0].carrier.id);
+            //var boat = await get_boat(String(load[0].carrier.id),req);
+            await remove_load(String(load[0].carrier.id),String(id),req);
+
+        }//}
+  //  catch(error){
+        
+        console.log("Couldnt find");
+ //   }
+
     return datastore.delete(key);
 }
 
@@ -210,6 +269,29 @@ router.get('/boats/:id', function(req, res){
         }) 
 });
 
+router.get('/boats/:id/loads', function(req, res){    
+    var fullUrl = req.protocol + '://' + req.get('host') + '' + req.originalUrl
+    //var result =  get_loads_for_boat(req.params.id,req).then(    res.status(200).json(result)  );
+        const loads = get_loads_for_boat(req.params.id,req)
+        .then( (loads) => {
+            res.status(200).json(loads);
+        });
+        console.log(loads);
+
+/*
+    const boat = get_boat(req.params.id,req).then( (boat) => {
+        boat[0].self = fullUrl;
+        //console.log(boat[0]) get_loads_for_boat
+        res.status(200).json(boat[0].loads);   
+    }).catch( (boat) => {
+            console.log("ERRORSSSS");
+            var Error = {"Error":"No boat with this boat_id exists"}; 
+            res.status(404).send(JSON.stringify(Error));
+        }) 
+*/
+    })
+
+
 
 router.get('/loads/:id', function(req, res){    
     var fullUrl = req.protocol + '://' + req.get('host') + '' + req.originalUrl
@@ -226,7 +308,7 @@ router.get('/loads/:id', function(req, res){
 });
 
 
-/*
+/* 
 router.get('/boats', function(req, res){
     const boats = get_boats().then( (boats) => {
         res.status(200).json(boats);
@@ -246,45 +328,6 @@ router.get('/loads', function(req, res){
 	.then( (loads) => {       
         res.status(200).json(loads);
     });
-});
-
-
-
-
-router.get('/slips', function(req, res){
-    const slips = get_slips().then( (slips) => {
-        res.status(200).json(slips);
-    });
-});
-
-router.get('/slips/:id', function(req, res){    
-    var fullUrl = req.protocol + '://' + req.get('host') + '' + req.originalUrl
-    const slip = get_slip(req.params.id).then( (slip) => {
-        slip[0].self = fullUrl;
-        console.log(slip[0])
-        res.status(200).json(slip[0]);   
-    }).catch( (slip) => {
-            console.log("ERRORSSSS");
-            var Error = {"Error":"No slip with this slip_id exists"}; 
-            res.status(404).send(JSON.stringify(Error));
-        }) 
-});
-
-router.post('/slips', function(req, res){ 
-    if(typeof(req.body.number) == "undefined")
-    {
-        var Error = {"Error":"The request object is missing the required number"}; 
-        res.status(400).send(JSON.stringify(Error));
-    } else {
-         var slip = {"number": req.body.number};
-         post_slip(req.body.number)
-         //post_lodging(req.body.name, req.body.description, req.body.price)
-         .then( key => {
-         slip.current_boat = null;    
-         slip.id = key.id;
-         slip.self = req.protocol + '://' + req.get('host') + '' + req.originalUrl + '/' + key.id;                
-        res.status(201).send(JSON.stringify(slip))} );
-    }
 });
 
 router.post('/boats', function(req, res){ 
@@ -339,7 +382,7 @@ router.put('/boats/:boat_id/loads/:load_id', function(req, res){
 
     //Adding Load to Boat
     console.log("Here we are");
-    var r = add_load(req.params.boat_id,req.params.load_id,req);
+    var r = assign_load(req.params.boat_id,req.params.load_id,req);
     console.log("After return");
     console.log(r);
     //var return_code = boat_arrive(req.params.slip_id, req.params.boat_id);
@@ -349,14 +392,20 @@ router.put('/boats/:boat_id/loads/:load_id', function(req, res){
     res.status(204).send(JSON.stringify(r));   
 });
 
-router.put('/slips/:slip_id/:boat_id', function(req, res){    
+//Remove assignment
+router.delete('/boats/:boat_id/loads/:load_id', function(req, res){    
 
-    var return_code = boat_arrive(req.params.slip_id, req.params.boat_id);
-    console.log(return_code);
-    res.status(204).send(null);   
+    //Adding Load to Boat
+    console.log("Here we are");
+    var r = remove_load(req.params.boat_id,req.params.load_id,req);
+    console.log("After return");
+    console.log(r);
+    //var return_code = boat_arrive(req.params.slip_id, req.params.boat_id);
+    //console.log(return_code);
+
+    
+    res.status(204).send(JSON.stringify(r));   
 });
-
-
 
 
 router.delete('/boats/:id', function(req, res){
@@ -364,13 +413,16 @@ router.delete('/boats/:id', function(req, res){
     //delete_boat(req.params.id).then(res.status(204)).catch(res.status(404))    
     //delete_boat(req.params.id)//.then(res.status(204))//.catch((a) => {})  
     //res.status(204);
-    delete_boat(req.params.id).then(res.status(204).end())    
+    delete_boat(req.params.id,req).then(res.status(204).end())    
     //delete_lodging(req.params.id).then(res.status(200).end())
 });
 
-
 router.delete('/loads/:id', function(req, res){
-    delete_load(req.params.id).then(res.status(204).end())    
+    var Error = {"Error":"The request object is missing at least one of the required attributes"}; 
+    //delete_boat(req.params.id).then(res.status(204)).catch(res.status(404))    
+    //delete_boat(req.params.id)//.then(res.status(204))//.catch((a) => {})  
+    //res.status(204);
+    delete_load(req.params.id,req).then(res.status(204)).catch(res.status(404).end())    
     //delete_lodging(req.params.id).then(res.status(200).end())
 });
 
